@@ -97,11 +97,16 @@ class AlphaBot(object):
 
         # Use on extra core for object recognition
         self.executor = ProcessPoolExecutor(max_workers=1, initializer=load_object_recognition_model())
-        # self.executor.submit(lambda: None)
+
         # Load label list
         with open("imagenet1000_clsidx_to_labels.txt") as f:
             labels_dict = ast.literal_eval(f.read())
-        self.imagenet_classes = [labels_dict[i] for i in range(len(labels_dict))]    
+        self.imagenet_classes = [labels_dict[i] for i in range(len(labels_dict))]
+
+        self.IR_DEBOUNCE = 3
+        self.IR_COOLDOWN_SEC = 1.5
+        self.ir_hist = 0
+        self.ir_ignore_until = 0.0
 
     # ----------------------------
     # LED Utility Methods
@@ -207,9 +212,20 @@ class AlphaBot(object):
     # Sensor and Buzzer Methods
     # ----------------------------
     def infrared_obstacle_check(self):
-        self.DR_status = GPIO.input(self.DR)
-        self.DL_status = GPIO.input(self.DL)
-        return self.DL_status == 0 or self.DR_status == 0
+        now = time.monotonic()
+
+        if now < self.ir_ignore_until:
+            return False
+        
+        hit_now = GPIO.input(self.DR) == 0 or GPIO.input(self.DL) == 0
+        self.ir_hist = ((self.ir_hist << 1) | hit_now) & 0xFF
+
+        mask = (1 << self.IR_DEBOUNCE) - 1
+        debounced_hit = (self.ir_hist & mask) == mask
+        if debounced_hit:
+            self.ir_ignore_until = now + self.IR_COOLDOWN_SEC
+            return True
+        return False
 
     def buzzer_on(self):
         GPIO.output(self.Buzzer, GPIO.HIGH)
@@ -236,7 +252,7 @@ class AlphaBot(object):
         label = self.imagenet_classes[idx]
         print(f"[Vision] {prob*100:5.1f}%  {label}")
 
-        if idx == 761:
+        if idx == 440 or idx == 720 or idx == 737 or idx == 898:
             self.set_led(0, 255, 0, 0)
         elif idx == 784:
             self.set_led(1, 255, 255, 0)
@@ -282,15 +298,15 @@ class AlphaBot(object):
                 print("Obstacle detected!")
                 self.stop_line_follow()
                 self.stop()
+
                 self.counter += 1
                 self.buzz_n_times()
+
                 frame = self.camera_server.picam2.capture_array()
                 fut = self.executor.submit(recognition_worker, frame)
                 fut.add_done_callback(self.handle_recognition_result)
                 self.clear_leds()
-                time.sleep(0.02)
                 print("Resuming line following.")
-                time.sleep(1.5)
                 self.line_following_active = True
             time.sleep(0.01)
 
