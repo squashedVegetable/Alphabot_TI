@@ -15,6 +15,8 @@ from ServoControllerClass import ServoController
 from CNNClass import CNN_NET
 
 import threading
+from concurrent.futures import ProcessPoolExecutor
+from VisionWorker import recognition_worker, load_object_recognition_model
 
 # LED strip configuration constants:
 LED_COUNT      = 4      # Number of LED pixels.
@@ -44,7 +46,7 @@ class AlphaBot(object):
         self.PB = 50
         self.integral = 0
         self.last_proportional = 0
-        self.maximum = 60
+        self.maximum = 40
         self.DR = 16
         self.DL = 19
         self.CS = 5
@@ -86,40 +88,20 @@ class AlphaBot(object):
                                             LED_DMA, LED_INVERT, LED_BRIGHTNESS, LED_CHANNEL)
         self.led_strip.begin()
 
-        # Load the CNN model for digit recognition
-        try:
-            self.cnn_model = torch.load("weights.h5", weights_only=False)
-            print("CNN model loaded successfully.")
-        except Exception as e:
-            print("Error loading CNN model:", e)
-            self.cnn_model = None
-
-        # Initialize object recognition model and labels
-        self.object_model = None
-        self.imagenet_classes = None
-        self.load_object_recognition_model()
-
         # A flag to track whether line following should happen
         self.line_following_active = True
 
         # Obeject counter
-        self.counter = 1
+        self.counter = 0
+        # self.buzz_lock = threading.Lock()
 
-    def load_object_recognition_model(self):
-        try:
-            self.object_model = models.quantization.mobilenet_v2(
-                weights=MobileNet_V2_QuantizedWeights.IMAGENET1K_QNNPACK_V1,
-                quantize=True
-            )
-            self.object_model.eval()
-            with open("imagenet1000_clsidx_to_labels.txt", "r") as f:
-                labels_dict = ast.literal_eval(f.read())
-                self.imagenet_classes = [labels_dict[i] for i in range(len(labels_dict))]
-            print("Object recognition model loaded successfully.")
-        except Exception as e:
-            print("Error loading object recognition model:", e)
-            self.object_model = None
-            self.imagenet_classes = None
+        # Use on extra core for object recognition
+        self.executor = ProcessPoolExecutor(max_workers=1, initializer=load_object_recognition_model())
+        # self.executor.submit(lambda: None)
+        # Load label list
+        with open("imagenet1000_clsidx_to_labels.txt") as f:
+            labels_dict = ast.literal_eval(f.read())
+        self.imagenet_classes = [labels_dict[i] for i in range(len(labels_dict))]    
 
     # ----------------------------
     # LED Utility Methods
@@ -202,15 +184,18 @@ class AlphaBot(object):
 
     def calibrate_sensors(self):
         print("Calibrating sensors...")
-        for i in range(0, 100):
-            if i < 25 or i >= 75:
-                self.right()
-            else:
-                self.left()
-            self.setPWMA(10)
-            self.setPWMB(10)
-            self.tr_sensor.calibrate()
+        # for i in range(0, 100):
+        #     if i < 25 or i >= 75:
+        #         self.right()
+        #     else:
+        #         self.left()
+        #     self.setPWMA(15)
+        #     self.setPWMB(15)
+        time.sleep(0.1)
         self.stop()
+        self.tr_sensor.calibrate()
+        self.stop()
+        time.sleep(0.1)
         print("Calibrated Min:", self.tr_sensor.calibratedMin)
         print("Calibrated Max:", self.tr_sensor.calibratedMax)
 
@@ -241,65 +226,23 @@ class AlphaBot(object):
     def stop_camera(self):
         self.camera_server.stop_server()
 
-    def recognize_digit(self):
-        if not hasattr(self, 'cnn_model') or self.cnn_model is None:
-            print("CNN model not loaded. Cannot recognize digit.")
-            return None
+    def handle_recognition_result(self, future):
         try:
-            frame = self.camera_server.picam2.capture_array()
-            if frame is None:
-                print("No frame captured for digit recognition.")
-                return None
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            im_gray = rgb2gray(frame)
-            img_gray_u8 = img_as_ubyte(im_gray)
-            (_, im_bw) = cv2.threshold(img_gray_u8, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-            img_resized = cv2.resize(im_bw, (28, 28))
-            im_gray_invert = 255 - img_resized
-            im_final = im_gray_invert.reshape(1, 1, 28, 28)
-            im_final = torch.from_numpy(im_final).type(torch.FloatTensor)
-            ans = self.cnn_model(im_final)
-            ans_list = ans[0].tolist()
-            predicted_digit = ans_list.index(max(ans_list))
-            return predicted_digit
+            idx, prob = future.result()
         except Exception as e:
-            print(f"Error during digit recognition: {e}")
-            return None
+            print("Object inference failed:", e)
+            return
+        
+        label = self.imagenet_classes[idx]
+        print(f"[Vision] {prob*100:5.1f}%  {label}")
 
-    def recognize_object(self):
-        if self.object_model is None or self.imagenet_classes is None:
-            print("Object recognition model not loaded. Cannot recognize object.")
-            return
-        if not hasattr(self, 'camera_server') or not hasattr(self.camera_server, 'picam2'):
-            print("Camera server or PiCamera2 not initialized for object recognition.")
-            return
-        preprocess = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Resize((224, 224)),  # Ensure correct input size
-            transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]),
-        ])
-        try:
-            with torch.no_grad():
-                frame = self.camera_server.picam2.capture_array()
-                if frame is None:
-                    print("No frame captured for object recognition.")
-                    return
-                input_tensor = preprocess(frame)
-                input_batch = input_tensor.unsqueeze(0)
-                output = self.object_model(input_batch)
-                probs = output[0].softmax(dim=0)
-                top_prob, top_idx = torch.max(probs, dim=0)
-                print(f"Object Recognition: {top_prob.item() * 100:.2f}% {self.imagenet_classes[top_idx.item()]}")
-                if top_idx.item() == 761:       # remote control
-                    self.set_led(0, 255, 0, 0)  # LED 1 red
-                elif top_idx.item() == 784:     # screwdriver
-                    self.set_led(1, 255, 255, 0)  # LED 2 yellow
-                elif top_idx.item() == 504:     # coffee mug
-                    self.set_led(2, 0, 255, 0)  # LED 3 green
-                self.update_leds()
-        except Exception as e:
-            print(f"Error during object recognition: {e}")
+        if idx == 761:
+            self.set_led(0, 255, 0, 0)
+        elif idx == 784:
+            self.set_led(1, 255, 255, 0)
+        elif idx == 504:
+            self.set_led(2, 0, 255, 0)
+        self.update_leds()
 
     # ----------------------------
     # Line Following Update
@@ -339,42 +282,22 @@ class AlphaBot(object):
                 print("Obstacle detected!")
                 self.stop_line_follow()
                 self.stop()
-                time.sleep(2)
-                self.clear_leds()
-                self.buzz_n_times()
-                print("Resuming line following.")
                 self.counter += 1
+                self.buzz_n_times()
+                frame = self.camera_server.picam2.capture_array()
+                fut = self.executor.submit(recognition_worker, frame)
+                fut.add_done_callback(self.handle_recognition_result)
+                self.clear_leds()
+                time.sleep(0.02)
+                print("Resuming line following.")
+                time.sleep(1.5)
                 self.line_following_active = True
-            time.sleep(0.02)
+            time.sleep(0.01)
 
     def line_following(self):
         while not stop_event:
             self.update_line_follow()
-
-    def object_detection(self):
-        object_detection_state = "left"
-        last_object_detection_time = time.time()
-        object_detection_interval = 1
-
-        while not stop_event:
-            current_time = time.time()
-            if current_time - last_object_detection_time >= object_detection_interval:
-                if object_detection_state == "left":
-                    self.servo.move_left()
-                    object_detection_state = "center1"
-                elif object_detection_state == "center1":
-                    self.servo.center()
-                    object_detection_state = "right"
-                elif object_detection_state == "right":
-                    self.servo.move_right()
-                    object_detection_state = "center2"
-                elif object_detection_state == "center2":
-                    self.servo.center()
-                    object_detection_state = "left"
-
-                self.recognize_object()
-                last_object_detection_time = current_time
-            time.sleep(0.02)
+            time.sleep(0.01)
 
     def buzz_n_times(self):
         for i in range(self.counter):
@@ -391,18 +314,17 @@ if __name__ == '__main__':
     bot.clear_leds()
     bot.start_camera()
     print("Camera server started. Visit http://<your_pi_ip>:5000/ in your browser.")
-    time.sleep(2)
+    time.sleep(5)
     bot.calibrate_sensors()
     bot.servo.middle()
     bot.servo.center()
 
     obstacle_detection_thread = threading.Thread(target=bot.obstacle_detection)
     line_following_thread = threading.Thread(target=bot.line_following)
-    # object_recognition_thread = threading.Thread(target=bot.object_detection)
 
     obstacle_detection_thread.start()
     line_following_thread.start()
-    # object_recognition_thread.start()
+
     try:
         while not stop_event:
             time.sleep(1)
@@ -412,10 +334,10 @@ if __name__ == '__main__':
         stop_event = True
         obstacle_detection_thread.join()
         line_following_thread.join()
-        # object_recognition_thread.join()
     finally:
         bot.stop_line_follow()
         bot.stop_camera()
         bot.servo.stop()
+        bot.executor.shutdown(wait=True)
         GPIO.cleanup()
         print("All operations stopped. Exiting program.")

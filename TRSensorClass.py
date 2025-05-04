@@ -1,5 +1,6 @@
 import RPi.GPIO as GPIO
 import time
+import numpy as np
 
 class TRSensor(object):
     def __init__(self, CS, Clock, Address, DataOut, numSensors=5):
@@ -67,28 +68,31 @@ class TRSensor(object):
     and used for the readCalibrated() method.
     """
     def calibrate(self):
-        max_sensor_values = [0]*self.numSensors
-        min_sensor_values = [0]*self.numSensors
-        for j in range(0,10):
+        self.calibratedMax = np.array([220, 220, 220, 220, 220])
+        self.calibratedMin = np.array([900, 900, 900, 900, 900])
+        # max_sensor_values = [0]*self.numSensors
+        # min_sensor_values = [0]*self.numSensors
+
+        # for j in range(0,10):
         
-            sensor_values = self.AnalogRead()
+        #     sensor_values = self.AnalogRead()
             
-            for i in range(0,self.numSensors):
+        #     for i in range(0,self.numSensors):
             
-                # set the max we found THIS time
-                if((j == 0) or max_sensor_values[i] < sensor_values[i]):
-                    max_sensor_values[i] = sensor_values[i]
+        #         # set the max we found THIS time
+        #         if((j == 0) or max_sensor_values[i] < sensor_values[i]):
+        #             max_sensor_values[i] = sensor_values[i]
 
-                # set the min we found THIS time
-                if((j == 0) or min_sensor_values[i] > sensor_values[i]):
-                    min_sensor_values[i] = sensor_values[i]
+        #         # set the min we found THIS time
+        #         if((j == 0) or min_sensor_values[i] > sensor_values[i]):
+        #             min_sensor_values[i] = sensor_values[i]
 
-        # record the min and max calibration values
-        for i in range(0,self.numSensors):
-            if(min_sensor_values[i] > self.calibratedMin[i]):
-                self.calibratedMin[i] = min_sensor_values[i]
-            if(max_sensor_values[i] < self.calibratedMax[i]):
-                self.calibratedMax[i] = max_sensor_values[i]
+        # # record the min and max calibration values
+        # for i in range(0,self.numSensors):
+        #     if(min_sensor_values[i] > self.calibratedMin[i]):
+        #         self.calibratedMin[i] = min_sensor_values[i]
+        #     if(max_sensor_values[i] < self.calibratedMax[i]):
+        #         self.calibratedMax[i] = max_sensor_values[i]
 
     """
     Returns values calibrated to a value between 0 and 1000, where
