@@ -8,7 +8,6 @@ from torchvision.models.quantization import MobileNet_V2_QuantizedWeights
 import ast
 from skimage import img_as_ubyte
 from skimage.color import rgb2gray
-import numpy as np
 
 from CameraServerClass import CameraServer
 from TRSensorClass import TRSensor
@@ -47,7 +46,7 @@ class AlphaBot(object):
         self.PB = 50
         self.integral = 0
         self.last_proportional = 0
-        self.maximum = 20
+        self.maximum = 50
         self.DR = 16
         self.DL = 19
         self.CS = 5
@@ -98,10 +97,7 @@ class AlphaBot(object):
 
         # Use on extra core for object recognition
         self.executor = ProcessPoolExecutor(max_workers=1, initializer=load_object_recognition_model)
-        self._pending = set()
-
-        dummy = np.zeros((224, 224, 3), dtype=np.uint8)
-        self.executor.submit(recognition_worker, dummy).result()
+        self._pending = set() 
         # Load label list
         with open("imagenet1000_clsidx_to_labels.txt") as f:
             labels_dict = ast.literal_eval(f.read())
@@ -263,9 +259,9 @@ class AlphaBot(object):
 
         if idx == 440 or idx == 720 or idx == 737 or idx == 898:
             self.set_led(0, 255, 0, 0)
-        elif idx == 770 or idx == 788 or idx == 514 or idx == 630:
+        elif idx == 784:
             self.set_led(1, 255, 255, 0)
-        elif idx == 518 or idx == 560 or idx == 570 or idx == 516:
+        elif idx == 504:
             self.set_led(2, 0, 255, 0)
         self.update_leds()
 
@@ -289,7 +285,7 @@ class AlphaBot(object):
             derivative = proportional - self.last_proportional
             self.integral += proportional
             self.last_proportional = proportional
-            power_difference = proportional / 30 + self.integral / 10000 + derivative * 2 #TODO: jemand *4 vorgeschlagen 
+            power_difference = proportional / 30 + self.integral / 10000 + derivative * 4 #TODO: jemand *4 vorgeschlagen 
             if power_difference > self.maximum:
                 power_difference = self.maximum
             if power_difference < -self.maximum:
@@ -331,9 +327,9 @@ class AlphaBot(object):
 
     def vision_worker(self):
         while not stop_event:
-            # self.stop_line_follow()
-            # self.stop()
-            # time.sleep(0.3)
+            self.stop_line_follow()
+            self.stop()
+            time.sleep(0.5)
 
             try:
                 with torch.no_grad():
@@ -347,9 +343,9 @@ class AlphaBot(object):
             self._pending.add(fut)
             fut.add_done_callback(self.handle_recognition_result)
             self.clear_leds()
-            # self.line_following_active = True
+            self.line_following_active = True
             
-            time.sleep(1)       
+            time.sleep(2)        
 
 # ----------------------------------------------------------------------------
 # Main Parallel Loop
@@ -364,13 +360,13 @@ if __name__ == '__main__':
     bot.servo.middle()
     bot.servo.center()
 
-    obstacle_detection_thread = threading.Thread(target=bot.obstacle_detection)
+    # obstacle_detection_thread = threading.Thread(target=bot.obstacle_detection)
     line_following_thread = threading.Thread(target=bot.line_following)
-    vision_worker_thread = threading.Thread(target=bot.vision_worker)
+    # vision_worker_thread = threading.Thread(target=bot.vision_worker)
 
-    obstacle_detection_thread.start()
+    # obstacle_detection_thread.start()
     line_following_thread.start()
-    vision_worker_thread.start()
+    # vision_worker_thread.start()
 
     try:
         while not stop_event:
@@ -379,9 +375,9 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected. Stopping execution.")
         stop_event = True
-        obstacle_detection_thread.join()
+        # obstacle_detection_thread.join()
         line_following_thread.join()
-        vision_worker_thread.join()
+        # vision_worker_thread.join()
         bot.executor.shutdown(wait=False)
     finally:
         bot.stop_line_follow()

@@ -8,12 +8,12 @@ from torchvision.models.quantization import MobileNet_V2_QuantizedWeights
 import ast
 from skimage import img_as_ubyte
 from skimage.color import rgb2gray
-import numpy as np
 
 from CameraServerClass import CameraServer
 from TRSensorClass import TRSensor
 from ServoControllerClass import ServoController
 from CNNClass import CNN_NET
+import numpy as np
 
 import threading
 from concurrent.futures import ProcessPoolExecutor
@@ -47,7 +47,7 @@ class AlphaBot(object):
         self.PB = 50
         self.integral = 0
         self.last_proportional = 0
-        self.maximum = 20
+        self.maximum = 17
         self.DR = 16
         self.DL = 19
         self.CS = 5
@@ -108,7 +108,7 @@ class AlphaBot(object):
         self.imagenet_classes = [labels_dict[i] for i in range(len(labels_dict))]
 
         self.IR_DEBOUNCE = 3
-        self.IR_COOLDOWN_SEC = 1.5
+        self.IR_COOLDOWN_SEC = 2.5
         self.ir_hist = 0
         self.ir_ignore_until = 0.0
 
@@ -260,7 +260,6 @@ class AlphaBot(object):
         finally:
             self._pending.discard(future)
         
-
         if idx == 440 or idx == 720 or idx == 737 or idx == 898:
             self.set_led(0, 255, 0, 0)
         elif idx == 770 or idx == 788 or idx == 514 or idx == 630:
@@ -289,7 +288,7 @@ class AlphaBot(object):
             derivative = proportional - self.last_proportional
             self.integral += proportional
             self.last_proportional = proportional
-            power_difference = proportional / 30 + self.integral / 10000 + derivative * 2 #TODO: jemand *4 vorgeschlagen 
+            power_difference = proportional / 30 + self.integral / 10000 + derivative * 4 #TODO: jemand *4 vorgeschlagen 
             if power_difference > self.maximum:
                 power_difference = self.maximum
             if power_difference < -self.maximum:
@@ -308,13 +307,8 @@ class AlphaBot(object):
                 self.counter += 1
                 self.buzz_n_times()
 
-                # self.stop_line_follow()
-                # self.stop()
                 print("Resuming line following.")
             time.sleep(0.01)
-
-            #self.line_following()
-            
 
     def line_following(self):
         while not stop_event:
@@ -333,7 +327,7 @@ class AlphaBot(object):
         while not stop_event:
             # self.stop_line_follow()
             # self.stop()
-            # time.sleep(0.3)
+            # time.sleep(0.5)
 
             try:
                 with torch.no_grad():
@@ -347,9 +341,9 @@ class AlphaBot(object):
             self._pending.add(fut)
             fut.add_done_callback(self.handle_recognition_result)
             self.clear_leds()
-            # self.line_following_active = True
+            self.line_following_active = True
             
-            time.sleep(1)       
+            time.sleep(1.5)        
 
 # ----------------------------------------------------------------------------
 # Main Parallel Loop
